@@ -3,12 +3,16 @@
 //needed for library
 #include <DNSServer.h>
 #include <ESP8266WebServer.h>
+#include <WebSocketsServer.h>
 #include <WiFiManager.h>         //https://github.com/tzapu/WiFiManager
-#include <EEPROM.h>
+#include <ESP8266mDNS.h>
+
+MDNSResponder mdns;
 
 WiFiManager wifiManager;
 
 ESP8266WebServer server(80);
+WebSocketsServer webSocket = WebSocketsServer(81);
 
 typedef struct {
   int temperature;
@@ -19,7 +23,7 @@ typedef struct {
 tpms_t tpms[8];
 int door;
 int cargo[3];
-
+int LOFF;
 //test data 고정길이 and TEXT BASE
 // READ FORMAT
 // &IDX|DATATYPE|DATA|CRC|
@@ -72,8 +76,93 @@ function buttonclick(e) {
 </html>
 )rawliteral";
 
+// GPIO#0 is for Adafruit ESP8266 HUZZAH board. Your board LED might be on 13.
+const int LEDPIN = 0;
+// Current LED status
+bool LEDStatus;
+
+// Commands sent through Web Socket
+const char LEDON[] = "ledon";
+const char LEDOFF[] = "ledoff";
+
+void webSocketEvent(uint8_t num, WStype_t type, uint8_t * payload, size_t length)
+{
+  Serial.printf("webSocketEvent(%d, %d, ...)\r\n", num, type);
+  switch(type) {
+    case WStype_DISCONNECTED:
+      Serial.printf("[%u] Disconnected!\r\n", num);
+      break;
+    case WStype_CONNECTED:
+      {
+        IPAddress ip = webSocket.remoteIP(num);
+        Serial.printf("[%u] Connected from %d.%d.%d.%d url: %s\r\n", num, ip[0], ip[1], ip[2], ip[3], payload);
+        // Send the current LED status
+        if (LEDStatus) {
+          webSocket.sendTXT(num, LEDON, strlen(LEDON));
+        }
+        else {
+          webSocket.sendTXT(num, LEDOFF, strlen(LEDOFF));
+        }
+      }
+      break;
+    case WStype_TEXT:
+      Serial.printf("[%u] get Text: %s\r\n", num, payload);
+
+      if (strcmp(LEDON, (const char *)payload) == 0) {
+        writeLED(true);
+      }
+      else if (strcmp(LEDOFF, (const char *)payload) == 0) {
+        writeLED(false);
+      }
+      else {
+        Serial.println("Unknown command");
+      }
+      // send data to all connected clients
+      webSocket.broadcastTXT(payload, length);
+      break;
+    case WStype_BIN:
+      Serial.printf("[%u] get binary length: %u\r\n", num, length);
+      hexdump(payload, length);
+
+      // echo data back to browser
+      webSocket.sendBIN(num, payload, length);
+      break;
+    default:
+      Serial.printf("Invalid WStype [%d]\r\n", type);
+      break;
+  }
+}
+
 void handleRoot() {
-  server.send(200, "text/plain", "hello from esp8266!");
+  server.send(200, "text/html", INDEX_HTML);
+}
+
+void handleNotFound()
+{
+  String message = "File Not Found\n\n";
+  message += "URI: ";
+  message += server.uri();
+  message += "\nMethod: ";
+  message += (server.method() == HTTP_GET)?"GET":"POST";
+  message += "\nArguments: ";
+  message += server.args();
+  message += "\n";
+  for (uint8_t i=0; i<server.args(); i++){
+    message += " " + server.argName(i) + ": " + server.arg(i) + "\n";
+  }
+  server.send(404, "text/plain", message);
+}
+
+static void writeLED(bool LEDon)
+{
+  LEDStatus = LEDon;
+  // Note inverted logic for Adafruit HUZZAH board
+  if (LEDon) {
+    digitalWrite(LEDPIN, 0);
+  }
+  else {
+    digitalWrite(LEDPIN, 1);
+  }
 }
 
 void setup() {
@@ -106,9 +195,29 @@ void setup() {
 
     //if you get here you have connected to the WiFi
     Serial.println("connected...yeey :)");
+    
+
+    if (mdns.begin("apcon", WiFi.localIP())) {
+    Serial.println("MDNS responder started");
+    mdns.addService("http", "tcp", 80);
+    mdns.addService("ws", "tcp", 81);
+
     server.on ( "/", handleRoot );
-     server.begin();
+    server.onNotFound(handleNotFound);
+    
+    server.begin();
+     
+    webSocket.begin();
+  webSocket.onEvent(webSocketEvent);
     Serial.println("Server started");
+    
+  }
+  else {
+    Serial.println("MDNS.begin failed");
+  }
+  Serial.print("Connect to http://apcon.local or http://");
+  Serial.println(WiFi.localIP());
+
 }
 
 void loop() {
@@ -127,38 +236,20 @@ void loop() {
     //TODO : read data to uart (BLE Data)
     if(Serial.available() > 0) {
         //check protocol and parse data
-        //incomingByte = Serial.read();//readbyte
+        //incomingByte = Serial.readStringUntil('\n');//readbyte
     }
-
-    #if 0
-    //TODO : connect TCP Server and send msg for PC
-    char *host = "192.168.0.14";
-    Serial.print("Connecting to ");
-    Serial.println(host);
-    WiFiClient client;
-    const int tcpPort = 2222;
-    if(!client.connect(host, tcpPort)) {
-      Serial.println("Connection Failed");
-    } else {
-      client.println("AAA"); //json or etc
-      client.stop();
-    }
-    #endif
 
     //TODO : add web server setup page for add client and server ip
+    webSocket.loop();
     server.handleClient();
 
+    if(LOFF ==1) {
+    webSocket.broadcastTXT(LEDOFF, strlen(LEDOFF));
+    LOFF = 0;
+    } else {
+      webSocket.broadcastTXT(LEDON, strlen(LEDON));
+    LOFF = 1;
+    }
     delay(1000);
 }
 
-void server_routine()
-{
-  //cmd to BL620 ble scan (check adv packet)
-  //get ble addr
-
-  //add ble addr
-  // EEPROM.begin(256);
-  // EEPROM.read(1);
-  // EEPROM.write(0,1);
-  // EEPROM.end();
-}
