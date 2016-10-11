@@ -65,7 +65,7 @@ void setup() {
 }
 
 void loop() {
-  BL620EventLoop();
+  //BL620EventLoop();
 
   ESP8266EventLoop();
 
@@ -74,6 +74,10 @@ void loop() {
     Serial1.write(Serial.read());   // read it and send it out Serial1 (pins 0 & 1)
   }
   #endif
+
+  //TEST
+    Serial2.println("BLESCANDATA:00AABBCCDDEEFF|AAAAAAAAAAAA|AAAAAAAAAAAAAAA|AAAAAAAAAAAAA|AAAAAAAAAAAA");
+    delay(1000);
 }
 
 void BL620EventLoop()

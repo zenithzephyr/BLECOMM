@@ -60,6 +60,9 @@ function start() {
     else {
       console.log('unknown event');
     }
+    //SCAN LIST
+    //TODO BLE ADD Button
+    //DOM Add
   };
 }
 function buttonclick(e) {
@@ -68,10 +71,47 @@ function buttonclick(e) {
 </script>
 </head>
 <body onload="javascript:start();">
-<h1>ESP8266 WebSocket Demo</h1>
-<div id="ledstatus"><b>LED</b></div>
-<button id="ledon"  type="button" onclick="buttonclick(this);">On</button>
-<button id="ledoff" type="button" onclick="buttonclick(this);">Off</button>
+<h1>Cargo Status Demo</h1>
+
+<ul>
+<li>Door Sensor: <div id="DOOR_SEN"><b>Status</b></div></li>
+<li>Cargo Sensor 1: <div id="CARGO_SEN1"><b>Status</b></div></li>
+<li>Cargo Sensor 2: <div id="CARGO_SEN2"><b>Status</b></div></li>
+<li>Cargo Sensor 3: <div id="CARGO_SEN3"><b>Status</b></div></li>
+<li><button id="BLEREMOVE:0" type="button" onclick="buttonclick(this);">Remove</button></li>
+</ul>
+
+<ul>
+<li>TPMS1 Battery: <div id="TPMS1_BATT"><b>Status</b></div></li>
+<li>TPMS1 Pressure: <div id="TPMS1_PRES"><b>Status</b></div></li>
+<li>TPMS1 Temperature: <div id="TPMS1_TEMP"><b>Status</b></div></li>
+<li><button id="BLEREMOVE:1" type="button" onclick="buttonclick(this);">Remove</button></li>
+</ul>
+
+<ul>
+<li>TPMS2 Battery: <div id="TPMS2_BATT"><b>Status</b></div></li>
+<li>TPMS2 Pressure: <div id="TPMS2_PRES"><b>Status</b></div></li>
+<li>TPMS2 Temperature: <div id="TPMS2_TEMP"><b>Status</b></div></li>
+<li><button id="BLEREMOVE:2" type="button" onclick="buttonclick(this);">Remove</button></li>
+</ul>
+
+<ul>
+<li>TPMS3 Battery: <div id="TPMS3_BATT"><b>Status</b></div></li>
+<li>TPMS3 Pressure: <div id="TPMS3_PRES"><b>Status</b></div></li>
+<li>TPMS3 Temperature: <div id="TPMS3_TEMP"><b>Status</b></div></li>
+<li><button id="BLEREMOVE:3" type="button" onclick="buttonclick(this);">Remove</button></li>
+</ul>
+
+<ul>
+<li>TPMS4 Battery: <div id="TPMS4_BATT"><b>Status</b></div></li>
+<li>TPMS4 Pressure: <div id="TPMS4_PRES"><b>Status</b></div></li>
+<li>TPMS4 Temperature: <div id="TPMS4_TEMP"><b>Status</b></div></li>
+<li><button id="BLEREMOVE:4" type="button" onclick="buttonclick(this);">Remove</button></li>
+</ul>
+
+<button id="BLESCAN" type="button" onclick="buttonclick(this);">Scan</button>
+<button id="BLESTOP" type="button" onclick="buttonclick(this);">Stop</button>
+
 </body>
 </html>
 )rawliteral";
@@ -82,8 +122,10 @@ const int LEDPIN = 0;
 bool LEDStatus;
 
 // Commands sent through Web Socket
-const char LEDON[] = "ledon";
-const char LEDOFF[] = "ledoff";
+const char BLESCAN[] = "BLESCAN";
+const char BLESTOP[] = "BLESTOP";
+const char BLEADD[] = "BLEADD";
+const char BLEREMOVE[] = "BLEREMOVE";
 
 void webSocketEvent(uint8_t num, WStype_t type, uint8_t * payload, size_t length)
 {
@@ -96,29 +138,32 @@ void webSocketEvent(uint8_t num, WStype_t type, uint8_t * payload, size_t length
       {
         IPAddress ip = webSocket.remoteIP(num);
         Serial.printf("[%u] Connected from %d.%d.%d.%d url: %s\r\n", num, ip[0], ip[1], ip[2], ip[3], payload);
-        // Send the current LED status
-        if (LEDStatus) {
-          webSocket.sendTXT(num, LEDON, strlen(LEDON));
-        }
-        else {
-          webSocket.sendTXT(num, LEDOFF, strlen(LEDOFF));
-        }
       }
       break;
     case WStype_TEXT:
       Serial.printf("[%u] get Text: %s\r\n", num, payload);
 
-      if (strcmp(LEDON, (const char *)payload) == 0) {
-        writeLED(true);
+      if (strcmp(BLESCAN, (const char *)payload) == 0) {
+        //Send BLE SCAN CMD to Meag
+        Serial.printf("%s\n", payload);
       }
-      else if (strcmp(LEDOFF, (const char *)payload) == 0) {
-        writeLED(false);
+      else if (strcmp(BLESTOP, (const char *)payload) == 0) {
+        //Send BLE SCAN STOP CMD to Mega
+        Serial.printf("%s\n", payload);
+      }
+      else if (strncmp(BLEADD, (const char *)payload, 6) == 0) {  //FIXME:strncmp
+        //Send BLE ADD CMD to Mega 
+        Serial.printf("%s\n",payload);
+      }
+      else if (strncmp(BLEREMOVE, (const char *)payload, 9) == 0) { //FIXME:strncmp
+        //Send BLE ADD CMD to Mega 
+        Serial.printf("%s\n",payload);
       }
       else {
         Serial.println("Unknown command");
       }
       // send data to all connected clients
-      webSocket.broadcastTXT(payload, length);
+      //webSocket.broadcastTXT(payload, length);
       break;
     case WStype_BIN:
       Serial.printf("[%u] get binary length: %u\r\n", num, length);
@@ -153,18 +198,6 @@ void handleNotFound()
   server.send(404, "text/plain", message);
 }
 
-static void writeLED(bool LEDon)
-{
-  LEDStatus = LEDon;
-  // Note inverted logic for Adafruit HUZZAH board
-  if (LEDon) {
-    digitalWrite(LEDPIN, 0);
-  }
-  else {
-    digitalWrite(LEDPIN, 1);
-  }
-}
-
 void setup() {
     // put your setup code here, to run once:
     Serial.begin(9600);
@@ -195,7 +228,7 @@ void setup() {
 
     //if you get here you have connected to the WiFi
     Serial.println("connected...yeey :)");
-    
+
 
     if (mdns.begin("apcon", WiFi.localIP())) {
     Serial.println("MDNS responder started");
@@ -204,13 +237,13 @@ void setup() {
 
     server.on ( "/", handleRoot );
     server.onNotFound(handleNotFound);
-    
+
     server.begin();
-     
+
     webSocket.begin();
   webSocket.onEvent(webSocketEvent);
     Serial.println("Server started");
-    
+
   }
   else {
     Serial.println("MDNS.begin failed");
@@ -235,14 +268,18 @@ void loop() {
 
     //TODO : read data to uart (BLE Data)
     if(Serial.available() > 0) {
-        //check protocol and parse data
-        //incomingByte = Serial.readStringUntil('\n');//readbyte
+        String eventString;
+        char eventChar[128] = {0, };
+        eventString = Serial.readStringUntil('\n');//readbyte
+        eventString.toCharArray(eventChar,128);
+        Serial.printf("[%s]\n", eventChar);
     }
 
     //TODO : add web server setup page for add client and server ip
     webSocket.loop();
     server.handleClient();
 
+#if 0
     if(LOFF ==1) {
     webSocket.broadcastTXT(LEDOFF, strlen(LEDOFF));
     LOFF = 0;
@@ -251,5 +288,5 @@ void loop() {
     LOFF = 1;
     }
     delay(1000);
+#endif
 }
-
