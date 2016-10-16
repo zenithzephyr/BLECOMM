@@ -1,0 +1,406 @@
+// Copyright (c) 2014, Laird
+//
+// Permission to use, copy, modify, and/or distribute this software for any
+// purpose with or without fee is hereby granted, provided that the above
+// copyright notice and this permission notice appear in all copies.
+//
+// THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+// WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+// MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY
+// SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+// WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+// ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR
+// IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+//
+// SPDX-License-Identifier:ISC
+//
+// This is a sample app for demonstration purpose only
+//
+// +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+// +++++                                                                      ++
+// +++++  When UwTerminal downloads the app it will store it as a filenname   ++
+// +++++  which consists of all characters up to the first . and excluding it ++
+// +++++                                                                      ++
+// +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+//
+// BleLedDemo.sb
+//  -- Created to demonstrating the following:
+//     - Press a button on the BL600 dev board and it lights an LED on the BL620 dev board.
+//     - Press a button on the BL620 dev board and it lights an LED on the BL600 dev board
+//
+// Values: 0x00  -> Both LEDs off
+//         0x01  -> LED 0 on, LED 1 off
+//         0x02  -> LED 1 on, LED 0 off
+//         0x03  -> Both LEDs on
+//
+//   ####################################
+//   #                                  #
+//   #  Search for TODO to make changes #
+//   #                                  #
+//   ####################################
+//
+//******************************************************************************
+
+//******************************************************************************
+// Definitions
+//******************************************************************************
+#define ENABLE_DEBUG_PRINTS                  1
+
+#define ADV_MAGIC0 "\43\61\72\67\6F" //Cargo
+#define ADV_MAGIC1 "\54\48\4E\2D" //THN-
+
+//++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+//Can ignore the rest of the following #defines for now
+//++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+#define DEVICENAME_WRITABLE                  1
+       //BLE_APPEARANCE_GENERIC_TAG
+#define APPEARANCE                           512
+#define MANF_NAME                            "Laird Technologies"
+#define MODELSTR                             "BL600"
+
+        // Minimum acceptable connection interval (0.5 seconds)
+#define MIN_CONN_INTERVAL                    20000
+        // Maximum acceptable connection interval (1 second).
+#define MAX_CONN_INTERVAL                    100000
+        // Slave latency -- number of conn events that can be missed
+        // Effective Conn interval will be (SLAVE_LATENCY+1)*ACTUAL_CONN_INTERVAL
+#define SLAVE_LATENCY                        1
+        // Connection supervisory timeout (4 seconds) - max 32 seconds
+#define CONN_SUP_TIMEOUT                     8000000
+        //EvBleMsg ID for a BLE disconnection event
+#define BLE_DISCONNECTED                     1
+
+#define AD_128BIT_UUID                       0x21
+
+
+//******************************************************************************
+// Register Error Handler as early as possible
+//******************************************************************************
+sub HandlerOnErr()
+  if (ENABLE_DEBUG_PRINTS!=0) then
+    print "\n OnErr - ";GetLastError();"\n"
+  endif
+endsub
+onerror next HandlerOnErr
+
+
+//******************************************************************************
+// Global Variable Declarations
+//******************************************************************************
+dim rc           //Result code
+dim prAddr$      //Peer BT address (not required for this app) hence empty
+dim hSvc         //Service handler
+dim hCliLeds     //GATT Client LEDs characteristic handle
+dim hSerLeds     //GATT Server LEDs characteristic handle
+dim hSvcUuid     //Btn LED service UUID handle
+dim hConn        //Connection handle
+dim hSerLedsUuid
+dim urts                    //Will be <0 if uart parser suspended
+
+//BLE Connection
+dim pAddr[8] as string
+dim curAddrIdx
+dim addrExist[8] as integer
+dim workingConn
+dim scanStart
+
+dim stRsp$ as string        //Uart rx data is stored here
+
+urts=0 //Not suspended
+//******************************************************************************
+// Initialise Global Variable
+//******************************************************************************
+prAddr$=""
+
+//******************************************************************************
+// Function and Subroutine definitions
+//******************************************************************************
+
+//------------------------------------------------------------------------------
+// For debugging
+// --- Format: ln=ABCD
+//     AB : Subroutine/Function number
+//     CD : Result code number
+//------------------------------------------------------------------------------
+Sub AssertRC(rc,ln)
+    if rc!=0 then
+        print "\nFail :";integer.h' rc;" at tag ";ln
+    endif
+EndSub
+
+
+//------------------------------------------------------------------------------
+// Delay using a while loop
+//------------------------------------------------------------------------------
+Sub Delay(ms)
+    dim i : i = GetTickCount()
+    while GetTickSince(i)<ms
+    endwhile
+EndSub
+
+
+//------------------------------------------------------------------------------
+// Start scanning
+//------------------------------------------------------------------------------
+Function StartScanning()
+    rc = BleScanStart(10000,0)
+    AssertRC(rc,197)
+    //print "-- Scanning\n"
+EndFunc 1
+//------------------------------------------------------------------------------
+//------------------------------------------------------------------------------
+Sub OnStartup()
+  rc = BleGattcOpen(0,0)
+  //rc = StartScanning()
+EndSub
+
+
+//******************************************************************************
+// Handler definitions
+//******************************************************************************
+
+//------------------------------------------------------------------------------
+// Called when a notification or indication arrives from gatt server (BL600)
+//------------------------------------------------------------------------------
+Function HndlrAttrNotify()
+    dim dta$, nDisc, hAttr, dta
+
+    //Read the data
+    rc=BleGattcNotifyRead(hConn, hAttr, dta$, nDisc)
+    print "^^";curAddrIdx;"2";StrHexize$(dta$);"\n"
+    rc=BleDisconnect(hConn)
+EndFunc 1
+
+//------------------------------------------------------------------------------
+// Called when an advert is received
+//------------------------------------------------------------------------------
+Function HndlrAdvRpt()
+    dim pAddr$, advDta$, nDisc, nRssi, adVal$
+    dim uuid0$ : uuid0$ = ADV_MAGIC0
+    dim uuid1$ : uuid1$ = ADV_MAGIC1
+    do
+        rc = BleScanGetAdvReport(pAddr$, advDta$, nDisc, nRssi)
+
+  //      print "ADVDATA = ";StrHexize$(advDta$)
+  //      print "\n"
+
+        if StrPos(advDta$,uuid0$, 0)>0 then
+          print "&&1";StrHexize$(pAddr$);"\n"
+        elseif StrPos(advDta$,uuid1$, 0)>0 then
+          print "&&2";StrHexize$(pAddr$);"\n"
+        endif
+    until rc!=0
+EndFunc 1
+
+//------------------------------------------------------------------------------
+// Ble event handler
+//------------------------------------------------------------------------------
+Function HndlrBleMsg(ByVal nMsgId, ByVal connHndl)
+    if nMsgID==1 then
+        rc = -1
+        //print "-- Disconnected from client\n"
+    elseif nMsgID==0 then
+        //print "-- Connected to GATT Server\n"
+        hConn = connHndl
+        dim atHndl, nOff, at$
+
+        if curAddrIdx != 0 then
+          //battery
+          atHndl = 18
+          nOff = 0
+          rc=BleGattcRead(hConn,atHndl,nOff)
+          if rc==0 then
+            WaitEvent
+          endif
+
+          //themo
+          atHndl = 22
+          nOff = 0
+          rc=BleGattcRead(hConn,atHndl,nOff)
+          if rc==0 then
+            WaitEvent
+          endif
+        else
+          //door
+          atHndl = 41
+          nOff = 0
+          rc=BleGattcRead(hConn,atHndl,nOff)
+          if rc==0 then
+            WaitEvent
+          endif
+
+          //cargo
+          atHndl = 43
+          nOff = 0
+          rc=BleGattcRead(hConn,atHndl,nOff)
+          if rc==0 then
+            WaitEvent
+          endif
+
+          rc=BleDisconnect(hConn)
+        endif
+    endif
+EndFunc 1
+
+//------------------------------------------------------------------------------
+// Disconnection
+//------------------------------------------------------------------------------
+Function HndlrDiscon(hConn, rsn)
+  //print "Disconnected. Restart Connect\n"
+  curAddrIdx = curAddrIdx + 1
+  if curAddrIdx > 7 then
+    curAddrIdx = 0
+  endif
+
+  rc = BleScanStop()
+
+  while workingConn == 1
+    if addrExist[curAddrIdx] > 0 then
+      //print "Connect to ";curAddrIdx;"\n"
+      rc = BleConnect(pAddr[curAddrIdx], 2000, MIN_CONN_INTERVAL, MAX_CONN_INTERVAL, CONN_SUP_TIMEOUT)
+      break
+    endif
+
+    curAddrIdx = curAddrIdx + 1
+
+    if curAddrIdx > 7 then
+      curAddrIdx = 0
+    endif
+  endwhile
+
+  if scanStart == 1 then
+    rc = StartScanning()
+    scanStart = 0
+  endif
+EndFunc 1
+
+Function HndlrConnTO()
+  //print "--- Connection timeout\n"
+
+  curAddrIdx = curAddrIdx + 1
+  if curAddrIdx > 7 then
+    curAddrIdx = 0
+  endif
+
+  rc = BleScanStop()
+
+  while workingConn == 1
+    if addrExist[curAddrIdx] > 0 then
+      //print "Connect to ";curAddrIdx;"\n"
+      rc = BleConnect(pAddr[curAddrIdx], 2000, MIN_CONN_INTERVAL, MAX_CONN_INTERVAL, CONN_SUP_TIMEOUT)
+      break
+    endif
+
+    curAddrIdx = curAddrIdx + 1
+
+    if curAddrIdx > 7 then
+      curAddrIdx = 0
+    endif
+  endwhile
+
+  if scanStart == 1 then
+    rc = StartScanning()
+    scanStart = 0
+  endif
+
+EndFunc 1
+//------------------------------------------------------------------------------
+// Disconnection
+//------------------------------------------------------------------------------
+Function HndlrAttrRead(cHndl,aHndl,nSts) as integer
+    dim nOfst,at$
+    if nSts == 0 then
+      if curAddrIdx != 0 then
+        rc = BleGattcReadData(cHndl,aHndl,nOfst,at$)
+        if aHndl == 18 then
+          print "^^";curAddrIdx;"0";StrHexize$(at$);"\n"
+        elseif aHndl == 22 then
+          print "^^";curAddrIdx;"1";StrHexize$(at$);"\n"
+        elseif aHndl == 26 then
+          print "^^";curAddrIdx;"2";StrHexize$(at$);"\n"
+        endif
+      else
+        rc = BleGattcReadData(cHndl,aHndl,nOfst,at$)
+        if aHndl == 41 then
+          print "^^00";StrHexize$(at$);"\n"
+        elseif aHndl == 43 then
+          print "^^01";StrHexize$(at$);"\n"
+        endif
+      endif
+    else
+      print "\nFailed to read attribute"
+    endif
+EndFunc 0
+
+function HandlerUartRxCmd() as integer
+  dim nMatch, idx, t$, cmd$
+
+  if urts < 0 then
+    //Uart parser is suspended
+    exitfunc 1
+  endif
+
+  nMatch = UartReadMatch(stRsp$,13)
+  if nMatch!=0 then
+    //print "UART = ";stRsp$
+    //CR exists in the input buffer
+    t$ = strsplitleft$(stRsp$,nMatch)
+    cmd$ = strsplitleft$(t$, 6)
+    //print "CMD = ";cmd$;"\n"
+  if strcmp(cmd$,"BLESCN") == 0 then
+    //print "BLESCAN...\n"
+    if workingConn == 0 then
+      rc = StartScanning()
+    else
+      workingConn = 0
+    endif
+    scanStart = 1
+  elseif strcmp(cmd$,"BLESTP") == 0 then
+    scanStart = 0
+    rc = BleScanStop()
+    workingConn = 1
+  elseif strcmp(cmd$,"BLEADD") == 0 then
+    idx = StrGetChr(t$,0)
+    idx = idx - 0x30
+    StrShiftLeft(t$,1)
+    paddr[idx] = StrDehexize$(t$)
+    //print "ADDR ="; StrHexize$(paddr[idx]);"\n"
+    addrExist[idx] = 1
+  elseif strcmp(cmd$,"BLEDEL") == 0 then
+    idx = StrGetChr(t$,0)
+    idx = idx - 0x30
+    addrExist[idx] = 0
+  elseif strcmp(cmd$,"BLECON") == 0 then
+    idx = StrGetChr(t$,0)
+    idx = idx - 0x30
+    curAddrIdx = idx
+    workingConn = 1
+    rc = BleConnect(pAddr[curAddrIdx], 2000, MIN_CONN_INTERVAL, MAX_CONN_INTERVAL, CONN_SUP_TIMEOUT)
+    //paddr[1] = "\00\00\00\AA\AB\AC\08"
+    //paddr[0] = "\01\E7\7A\C3\9D\B2\97"
+  elseif strcmp(cmd$,"BLEDIS") == 0 then
+    workingConn = 0
+  endif
+  endif
+
+endfunc 1
+
+//******************************************************************************
+// Equivalent to main() in C
+//******************************************************************************
+OnStartup()
+
+ONEVENT EVUARTRX           CALL HandlerUartRxCmd
+ONEVENT EVATTRNOTIFY       CALL HndlrAttrNotify
+ONEVENT EVBLE_SCAN_TIMEOUT CALL StartScanning
+ONEVENT EVBLE_ADV_REPORT   CALL HndlrAdvRpt
+ONEVENT EvBleMsg           CALL HndlrBleMsg
+ONEVENT EvDiscon           CALL HndlrDiscon
+ONEVENT EVBLE_CONN_TIMEOUT CALL HndlrConnTO
+ONEVENT EVATTRREAD         CALL HndlrAttrRead
+
+//------------------------------------------------------------------------------
+// Wait for a synchronous event.
+// An application can have multiple <WaitEvent> statements
+//------------------------------------------------------------------------------
+WaitEvent
