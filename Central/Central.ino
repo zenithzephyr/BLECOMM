@@ -14,59 +14,105 @@ WiFiManager wifiManager;
 ESP8266WebServer server(80);
 WebSocketsServer webSocket = WebSocketsServer(81);
 
-void send_cmd(byte id, byte *data, byte len);
-void parse_xfer_buf();
-
-#define XFER_CMD_BLE_SCAN   0
-#define XFER_CMD_BLE_SCAN_STOP   1
-#define XFER_CMD_BLE_ADD_CLIENT  2
-#define XFER_CMD_BLE_REMOVE_CLIENT  3
-#define XFER_EVENT_BLE_SCAN_DATA  4
-#define XFER_EVENT_SENSOR_DATA  5
-
-#define XFER_EVENT_ACK 128
-#define XFER_EVENT_NACK 129
-
-#define XFER_HEADER_SIZE 5 //AA,55,version,id,len
-
-byte xfer_buf[512];
-int xfer_size;
-
 static const char PROGMEM INDEX_HTML[] = R"rawliteral(
 <!DOCTYPE html>
 <html>
 <head>
 <meta name = "viewport" content = "width = device-width, initial-scale = 1.0, maximum-scale = 1.0, user-scalable=0">
-<title>ESP8266 WebSocket Demo</title>
+<title>Central Server Demo</title>
 <style>
 "body { background-color: #808080; font-family: Arial, Helvetica, Sans-Serif; Color: #000000; }"
 </style>
 <script>
 var websock;
 function start() {
-  websock = new WebSocket('ws://' + window.location.hostname + ':81/');
-  websock.onopen = function(evt) { console.log('websock open'); };
-  websock.onclose = function(evt) { console.log('websock close'); };
-  websock.onerror = function(evt) { console.log(evt); };
-  websock.onmessage = function(evt) {
-    console.log(evt);
-    var e = document.getElementById('ledstatus');
-    if (evt.data === 'ledon') {
-      e.style.color = 'red';
-    }
-    else if (evt.data === 'ledoff') {
-      e.style.color = 'black';
-    }
-    else {
-      console.log('unknown event');
-    }
-    //SCAN LIST
-    //TODO BLE ADD Button
-    //DOM Add
-  };
+	websock = new WebSocket('ws://' + window.location.hostname + ':81/');
+	websock.onopen = function(evt) { console.log('websock open'); };
+	websock.onclose = function(evt) { console.log('websock close'); };
+	websock.onerror = function(evt) { console.log(evt); };
+	websock.onmessage = function(evt) {
+		console.log(evt);
+
+		var recvData = evt.data;
+		if (recvData.indexOf("&&") == 0) {
+			var type = recvData.charAt(2);
+			var addrData = recvData.substr(3,14); 
+			var i;
+
+			if(type == '0')
+				type = "Cargo ";
+			else
+				type = "TPMS ";
+
+			for(i=0;i<10;i++) {
+				if(document.getElementById("ADDR"+i).innerHTML == "None") {
+					document.getElementById("TYPE"+i).innerHTML = type;
+					document.getElementById("ADDR"+i).innerHTML = addrData;
+					break;
+				}
+				else if(document.getElementById("ADDR"+i).innerHTML == addrData) {
+					break;
+				}
+			}
+		}
+		else if (recvData.indexOf("^^") == 0) {
+			var dat_idx = recvData.charAt(3); 
+			var tpms_str = recvData.substr(2,1);
+
+      if(tpms_str == "0") {       
+        var eventData = recvData.substr(4,2);
+        switch(dat_idx) {
+         case '0':
+            document.getElementById("DOOR_SEN").innerHTML = eventData;
+            break;
+          case '1':
+           document.getElementById("CARGO_SEN1").innerHTML = eventData;
+            break;
+        }
+      } else {      
+        var eventData = recvData.substr(4,4);
+		  	switch(dat_idx) {
+		  		case '0':
+		  			document.getElementById("TPMS"+tpms_str+"_BATT").innerHTML = eventData;
+		  			break;
+		  		case '1':
+		  			document.getElementById("TPMS"+tpms_str+"_TEMP").innerHTML = eventData;
+		  			break;
+		  		case '2':
+		  			document.getElementById("TPMS"+tpms_str+"_PRES").innerHTML = eventData;
+		  			break;
+			  }
+      }
+
+		}
+		else {
+			console.log('unknown event');
+		}
+	};
 }
+
 function buttonclick(e) {
-  websock.send(e.id);
+	websock.send(e.id);
+}
+
+function addButtonclick(e) {
+
+	var idx = e.id.charAt(4);
+	var type = "TYPE"+idx;
+	var addr = "ADDR"+idx;
+	var sel = "SEL"+idx;
+	var send_msg;
+
+	if(e.id.substr(0,4) == "ADDB") {
+		if(document.getElementById(type).innerHTML == "Cargo ") { 
+			send_msg = "BLEADD0" + document.getElementById(addr).innerHTML;	
+			websock.send(send_msg);
+		}
+		else if(document.getElementById(type).innerHTML == "TPMS ") { 
+			send_msg = "BLEADD"+ document.getElementById(sel).selectedIndex + document.getElementById(addr).innerHTML;	
+			websock.send(send_msg);
+		} 
+	}
 }
 </script>
 </head>
@@ -74,57 +120,67 @@ function buttonclick(e) {
 <h1>Cargo Status Demo</h1>
 
 <ul>
-<li>Door Sensor: <div id="DOOR_SEN"><b>Status</b></div></li>
-<li>Cargo Sensor 1: <div id="CARGO_SEN1"><b>Status</b></div></li>
-<li>Cargo Sensor 2: <div id="CARGO_SEN2"><b>Status</b></div></li>
-<li>Cargo Sensor 3: <div id="CARGO_SEN3"><b>Status</b></div></li>
-<li><button id="BLEREMOVE:0" type="button" onclick="buttonclick(this);">Remove</button></li>
+	<li>Door Sensor: <span id="DOOR_SEN">Status</span></li>
+	<li>Cargo Sensor 1: <span id="CARGO_SEN1">Status</span></li>
+	<li>Cargo Sensor 2: <span id="CARGO_SEN2">Status</span></li>
+	<li>Cargo Sensor 3: <span id="CARGO_SEN3">Status</span></li>
+	<button id="BLEDEL0" type="button" onclick="buttonclick(this);">Remove</button>
 </ul>
 
 <ul>
-<li>TPMS1 Battery: <div id="TPMS1_BATT"><b>Status</b></div></li>
-<li>TPMS1 Pressure: <div id="TPMS1_PRES"><b>Status</b></div></li>
-<li>TPMS1 Temperature: <div id="TPMS1_TEMP"><b>Status</b></div></li>
-<li><button id="BLEREMOVE:1" type="button" onclick="buttonclick(this);">Remove</button></li>
+	<li>TPMS1 Battery: <span id="TPMS1_BATT">Status</span></li>
+	<li>TPMS1 Pressure: <span id="TPMS1_PRES">Status</span></li>
+	<li>TPMS1 Temperature: <span id="TPMS1_TEMP">Status</span></li>
+	<button id="BLEDEL1" type="button" onclick="buttonclick(this);">Remove</button>
 </ul>
 
 <ul>
-<li>TPMS2 Battery: <div id="TPMS2_BATT"><b>Status</b></div></li>
-<li>TPMS2 Pressure: <div id="TPMS2_PRES"><b>Status</b></div></li>
-<li>TPMS2 Temperature: <div id="TPMS2_TEMP"><b>Status</b></div></li>
-<li><button id="BLEREMOVE:2" type="button" onclick="buttonclick(this);">Remove</button></li>
+	<li>TPMS2 Battery: <span id="TPMS2_BATT">Status</span></li>
+	<li>TPMS2 Pressure: <span id="TPMS2_PRES">Status</span></li>
+	<li>TPMS2 Temperature: <span id="TPMS2_TEMP">Status</span></li>
+	<button id="BLEDEL2" type="button" onclick="buttonclick(this);">Remove</button>
 </ul>
 
 <ul>
-<li>TPMS3 Battery: <div id="TPMS3_BATT"><b>Status</b></div></li>
-<li>TPMS3 Pressure: <div id="TPMS3_PRES"><b>Status</b></div></li>
-<li>TPMS3 Temperature: <div id="TPMS3_TEMP"><b>Status</b></div></li>
-<li><button id="BLEREMOVE:3" type="button" onclick="buttonclick(this);">Remove</button></li>
+	<li>TPMS3 Battery: <span id="TPMS3_BATT">Status</span></li>
+	<li>TPMS3 Pressure: <span id="TPMS3_PRES">Status</span></li>
+	<li>TPMS3 Temperature: <span id="TPMS3_TEMP">Status</span></li>
+	<button id="BLEDEL3" type="button" onclick="buttonclick(this);">Remove</button>
 </ul>
 
 <ul>
-<li>TPMS4 Battery: <div id="TPMS4_BATT"><b>Status</b></div></li>
-<li>TPMS4 Pressure: <div id="TPMS4_PRES"><b>Status</b></div></li>
-<li>TPMS4 Temperature: <div id="TPMS4_TEMP"><b>Status</b></div></li>
-<li><button id="BLEREMOVE:4" type="button" onclick="buttonclick(this);">Remove</button></li>
+	<li>TPMS4 Battery: <span id="TPMS4_BATT">Status</span></li>
+	<li>TPMS4 Pressure: <span id="TPMS4_PRES">Status</span></li>
+	<li>TPMS4 Temperature: <span id="TPMS4_TEMP">Status</span></li>
+	<button id="BLEDEL4" type="button" onclick="buttonclick(this);">Remove</button>
 </ul>
 
-<button id="BLESCAN" type="button" onclick="buttonclick(this);">Scan</button>
-<button id="BLESTOP" type="button" onclick="buttonclick(this);">Stop</button>
+<ul>
+	<button id="BLESCN" type="button" onclick="buttonclick(this);">Scan</button>
+	<button id="BLESTP" type="button" onclick="buttonclick(this);">Stop</button>
+</ul>
+
+<ul>
+	<li><span id="TYPE0">None</span><span id="ADDR0">None</span><button id="ADDB0" type="button" onclick="addButtonclick(this);">Add</button><select id="SEL0"><option value="0">0</option><option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option></select></li>
+	<li><span id="TYPE1">None</span><span id="ADDR1">None</span><button id="ADDB1" type="button" onclick="addButtonclick(this);">Add</button><select id="SEL1"><option value="0">0</option><option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option></select></li>
+	<li><span id="TYPE2">None</span><span id="ADDR2">None</span><button id="ADDB2" type="button" onclick="addButtonclick(this);">Add</button><select id="SEL2"><option value="0">0</option><option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option></select></li>
+	<li><span id="TYPE3">None</span><span id="ADDR3">None</span><button id="ADDB3" type="button" onclick="addButtonclick(this);">Add</button><select id="SEL3"><option value="0">0</option><option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option></select></li>
+	<li><span id="TYPE4">None</span><span id="ADDR4">None</span><button id="ADDB4" type="button" onclick="addButtonclick(this);">Add</button><select id="SEL4"><option value="0">0</option><option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option></select></li>
+	<li><span id="TYPE5">None</span><span id="ADDR5">None</span><button id="ADDB5" type="button" onclick="addButtonclick(this);">Add</button><select id="SEL5"><option value="0">0</option><option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option></select></li>
+	<li><span id="TYPE6">None</span><span id="ADDR6">None</span><button id="ADDB6" type="button" onclick="addButtonclick(this);">Add</button><select id="SEL6"><option value="0">0</option><option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option></select></li>
+	<li><span id="TYPE7">None</span><span id="ADDR7">None</span><button id="ADDB7" type="button" onclick="addButtonclick(this);">Add</button><select id="SEL7"><option value="0">0</option><option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option></select></li>
+	<li><span id="TYPE8">None</span><span id="ADDR8">None</span><button id="ADDB8" type="button" onclick="addButtonclick(this);">Add</button><select id="SEL8"><option value="0">0</option><option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option></select></li>
+	<li><span id="TYPE9">None</span><span id="ADDR9">None</span><button id="ADDB9" type="button" onclick="addButtonclick(this);">Add</button><select id="SEL9"><option value="0">0</option><option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option></select></li>
+</ul>
 
 </body>
 </html>
 )rawliteral";
 
 // Commands sent through Web Socket
-const char BLESCAN[] = "BLESCAN";
-const char BLESTOP[] = "BLESTOP";
-const char BLEADD[] = "BLEADD";
-const char BLEREMOVE[] = "BLEREMOVE";
-
 void webSocketEvent(uint8_t num, WStype_t type, uint8_t * payload, size_t length)
 {
-  Serial.printf("webSocketEvent(%d, %d, ...)\r\n", num, type);
+  //Serial.printf("webSocketEvent(%d, %d, ...)\r\n", num, type);
   switch(type) {
     case WStype_DISCONNECTED:
       Serial.printf("[%u] Disconnected!\r\n", num);
@@ -136,31 +192,8 @@ void webSocketEvent(uint8_t num, WStype_t type, uint8_t * payload, size_t length
       }
       break;
     case WStype_TEXT:
-      Serial.printf("[%u] get Text: %s\r\n", num, payload);
-
-      if (strcmp(BLESCAN, (const char *)payload) == 0) {
-        //Send BLE SCAN CMD to Meag
-        Serial.printf("%s\n", payload);
-        send_cmd(XFER_CMD_BLE_SCAN, NULL, 0);
-      }
-      else if (strcmp(BLESTOP, (const char *)payload) == 0) {
-        //Send BLE SCAN STOP CMD to Mega
-        Serial.printf("%s\n", payload);
-        send_cmd(XFER_CMD_BLE_SCAN_STOP, NULL, 0);
-      }
-      else if (strncmp(BLEADD, (const char *)payload, 6) == 0) {  //FIXME:strncmp
-        //Send BLE ADD CMD to Mega
-        Serial.printf("%s\n",payload);
-        send_cmd(XFER_CMD_BLE_ADD_CLIENT, NULL, 0); //FIXME
-      }
-      else if (strncmp(BLEREMOVE, (const char *)payload, 9) == 0) { //FIXME:strncmp
-        //Send BLE ADD CMD to Mega
-        Serial.printf("%s\n",payload);
-        send_cmd(XFER_CMD_BLE_REMOVE_CLIENT, NULL, 0);
-      }
-      else {
-        Serial.println("Unknown command");
-      }
+      //Serial.printf("[%u] get Text: %s\r\n", num, payload);
+      Serial.printf("%s\r\n",payload);
       // send data to all connected clients
       //webSocket.broadcastTXT(payload, length);
       break;
@@ -216,7 +249,7 @@ void setup()
   //if it does not connect it starts an access point with the specified name
   //here  "AutoConnectAP"
   //and goes into a blocking loop awaiting configuration
-  String ChipId = "ConAP_";
+  String ChipId = "AutoConAP_";
   ChipId += String(ESP.getChipId(), HEX);
   ChipId.toUpperCase();
   Serial.println(ChipId);
@@ -254,93 +287,11 @@ void setup()
 
 }
 
-void send_cmd(byte id, byte *data, byte len)
-{
-    int i;
-
-    Serial.write(0xAA);
-    Serial.write(0x55);
-    Serial.write(0x01);
-    Serial.write(id);
-    Serial.write(len);
-    for(i=0;i<len;i++)
-      Serial.write(data[i]);
-
-    Serial.println("Send CMD Done.");
-}
-void parse_xfer_buf()
-{
-  byte *buf = xfer_buf;
-  byte id = 0, version = 0, len = 0;
-  int size = xfer_size;
-  int wait_data = 0;
-
-  while(size >= XFER_HEADER_SIZE) {
-    if(*buf++ != 0xAA) {
-      size--;
-      continue;
-    }
-
-    if(*buf++ != 0x55) {
-      size--;
-      continue;
-    }
-
-    version = *buf++;
-    size--;
-
-    id = *buf++;
-    size--;
-
-    len = *buf++;
-    size--;
-
-    if(size < len) { //wait more data
-      int i;
-
-      xfer_buf[0] = 0xAA;
-      xfer_buf[1] = 0x55;
-      xfer_buf[2] = version;
-      xfer_buf[3] = id;
-      xfer_buf[4] = len;
-
-      for(i=0;i<size;i++) {
-          xfer_buf[5+i] = buf[i];
-      }
-
-      xfer_size = size + 5;
-      wait_data = 1;
-      break;
-    }
-
-    //Serial.print(id);
-    //Serial.println("data Received");
-    //parse data
-    switch (id) {
-      case XFER_EVENT_BLE_SCAN_DATA:
-      //webSocket.broadcastTXT(LEDON, strlen(LEDON));
-      send_cmd(XFER_EVENT_ACK, NULL, 0);
-      break;
-      case XFER_EVENT_SENSOR_DATA:
-      send_cmd(XFER_EVENT_NACK, NULL, 0);
-      break;
-    }
-    size -= len;
-    buf +=len;
-  }
-
-  if(size && wait_data == 0) {
-    int i;
-    for(i=0;i<size;i++)
-    xfer_buf[i] = buf[i];
-    xfer_size = size;
-  }
-}
-
 void loop()
 {
     // put your main code here, to run repeatedly:
     //check gpio and reset settings
+#if 1
     if(digitalRead(2) == 0) {
       Serial.println("AP Reset Triggered");
       delay(1000);
@@ -350,27 +301,13 @@ void loop()
       //esp restart
       ESP.restart();
     }
-
-#if 0
-    //TODO : read data to uart (BLE Data)
-    if(Serial.available() > 0) {
-        String eventString;
-        char eventChar[128] = {0, };
-        eventString = Serial.readStringUntil('\n');//readbyte
-        eventString.toCharArray(eventChar,128);
-        Serial.printf("[%s]\n", eventChar);
-    }
 #endif
-    while(Serial.available() > 0) {
-      if(xfer_size < 512) {
-        xfer_buf[xfer_size] = Serial.read();
-        xfer_size++;
-      } else {
-          //xfer_buf full : flush?
-          parse_xfer_buf();
-      }
+
+    if(Serial.available() > 0) {
+      String buf;
+      buf = Serial.readStringUntil('\n');//readbyte
+      webSocket.broadcastTXT(buf);
     }
-    parse_xfer_buf();
 
     //TODO : add web server setup page for add client and server ip
     webSocket.loop();
